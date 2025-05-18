@@ -6,8 +6,9 @@ import { exec } from "child_process"
 import { promisify } from "util"
 import axios from "axios"
 import md5 from "md5"
+import iconv from "iconv-lite"
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(require("child_process").execFile)
 
 Meteor.startup(async () => {
   try {
@@ -33,61 +34,6 @@ Meteor.startup(async () => {
     pollRouter()
   }, 1000)
 })
-
-// Meteor.startup(async () => {
-//   const passwordPlain = Meteor.settings.private.routerPWD
-//   const passwordHashed = md5(passwordPlain)
-
-//   try {
-//     const res = await axios.post(
-//       "http://192.168.1.5/login/Auth",
-//       {
-//         username: "admin",
-//         password: passwordHashed,
-//       },
-//       {
-//         headers: {
-//           "Content-Type": "application/json",
-//           Referer: "http://192.168.1.5/index.html",
-//           Origin: "http://192.168.1.5",
-//           "X-Requested-With": "XMLHttpRequest",
-//         },
-//         validateStatus: null,
-//       }
-//     )
-
-//     const cookies = res.headers["set-cookie"]
-
-//     if (res.data && res.data.errCode === 0 && cookies) {
-//       const cookieString = cookies.map((c) => c.split(";")[0]).join("; ")
-//       console.log("✅ Login successful")
-//       console.log("🔐 Auth cookie:", cookieString)
-//     } else {
-//       console.error("❌ Login failed:", res.data)
-//     }
-//   } catch (err) {
-//     console.error("❌ Error logging in:", err.message)
-//   }
-// })
-
-// WebApp.connectHandlers.use("/sms", bodyParser.urlencoded({ extended: false }))
-// WebApp.connectHandlers.use("/sms", (req, res) => {
-//   const { From, Body } = req.body
-
-//   if (From && Body) {
-//     Messages.insertAsync({
-//       from: From,
-//       body: Body,
-//       receivedAt: new Date(),
-//     })
-//     console.log(`[SMS] Received from ${From}: ${Body}`)
-//     res.writeHead(200, { "Content-Type": "text/plain" })
-//     res.end("Message received")
-//   } else {
-//     res.writeHead(400)
-//     res.end("Bad request")
-//   }
-// })
 
 const pollRouter = async function () {
   const passwordPlain = Meteor.settings.private.routerPWD
@@ -129,26 +75,23 @@ const pollRouter = async function () {
 
   try {
     // Step 2 – Fetch SMS using curl
-    const curlCmd = `
-      curl -s 'http://192.168.1.5/goform/getModules?rand=${Math.random()}&currentPage=1&pageSizes=200&modules=smsList' \
-      -H 'Referer: http://192.168.1.5/index.html' \
-      -H 'X-Requested-With: XMLHttpRequest' \
-      -H 'Cookie: ${cookieString}' \
-      -H 'User-Agent: Mozilla/5.0' \
-      -H 'Accept: application/json, text/plain, */*'
-    `
-      .replace(/\s+/g, " ")
-      .trim()
+    const rand = Math.random()
+    const url = `http://192.168.1.5/goform/getModules?rand=${rand}&currentPage=1&pageSizes=200&modules=smsList`
 
-    const { stdout } = await execAsync(curlCmd)
+    const { stdout } = await execFileAsync(
+      "curl",
+      ["-s", url, "-H", "Referer: http://192.168.1.5/index.html", "-H", "X-Requested-With: XMLHttpRequest", "-H", `Cookie: ${cookieString}`, "-H", "User-Agent: Mozilla/5.0", "-H", "Accept: application/json, text/plain, */*"],
+      { encoding: "buffer", maxBuffer: 10 * 1024 * 1024 }
+    )
 
+    const decoded = iconv.decode(stdout, "utf-8") // or try "latin1", "gbk", etc.
+    console.log("📦 Raw decoded data (first 600 chars):", decoded.slice(0, 600))
     let data
     try {
-      data = JSON.parse(stdout)
-    } catch (err) {
-      console.error("❌ Could not parse curl output as JSON:", err.message)
-      console.log("📦 Raw output:", stdout.slice(0, 300))
-      return
+      data = JSON.parse(decoded)
+    } catch (e) {
+      console.error("❌ Failed to parse decoded response:", decoded.slice(0, 300))
+      throw e
     }
 
     const phoneList = data?.smsList?.phoneList || []
